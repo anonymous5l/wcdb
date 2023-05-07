@@ -1,0 +1,45 @@
+syntax = "proto2";
+
+option go_package = "github.com/anonymous5l/wcdb/protobuf;protobuf";
+
+package protobuf;
+
+message SKBuiltinString {
+  optional string str = 1;
+}
+
+message SKBuiltinBuffer {
+  required uint32 len = 1;
+  optional bytes buffer = 2;
+}
+
+message SKBuiltinUint32 {
+  required uint32 uiVal = 1;
+}
+
+message BakChatMsgItem {
+  required uint32 type = 1;
+  optional string clientMsgId = 2;
+  required SKBuiltinString fromUserName = 3;
+  required SKBuiltinString toUserName = 4;
+  required SKBuiltinString content = 5;
+  required uint32 msgStatus = 6;
+  required uint32 clientMsgTime = 7;
+  required string msgSource = 8;
+  required uint32 msgId = 9;
+  optional uint32 mediaIdCount = 10;
+  repeated SKBuiltinString mediaId = 11;
+  repeated SKBuiltinUint32 mediaType = 12;
+  optional SKBuiltinBuffer buffer = 13;
+  optional uint32 bufferLength = 14;
+  optional uint32 bufferType = 15;
+  optional uint64 newMsgId = 16;
+  optional uint32 sequentId = 17;
+  optional int64 clientMsgMillTime = 18;
+  optional uint32 msgFlag = 19;
+}
+
+message BakChatMsgList {
+  required uint32 count = 1;
+  repeated BakChatMsgItem list = 2;
+}
