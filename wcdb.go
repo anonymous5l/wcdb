@@ -203,24 +203,48 @@ func (db *BackupDB) Name2ID() ([]Name2ID, error) {
 	return sessions, nil
 }
 
-func (db *BackupDB) MsgSegment(talkerId int) (*MsgSegment, error) {
-	var msg MsgSegment
-	row := db.db.QueryRow("SELECT * FROM MsgSegments WHERE talkerId = ?", talkerId)
-	if row.Err() != nil {
-		return nil, row.Err()
-	}
-	if err := row.Scan(&msg.TalkerId, &msg.StartTime, &msg.EndTime,
-		&msg.OffSet, &msg.Length, &msg.UsrName, &msg.Status,
-		&msg.Reserved1, &msg.FilePath, &msg.SegmentId, &msg.Reserved2,
-		&msg.Reserved3); err != nil {
+func (db *BackupDB) MsgSegment(talkerId int) ([]MsgSegment, error) {
+	row, err := db.db.Query("SELECT * FROM MsgSegments WHERE talkerId = ?", talkerId)
+	if err != nil {
 		return nil, err
 	}
-	return &msg, nil
+	defer row.Close()
+	var msgs []MsgSegment
+	for row.Next() {
+		var msg MsgSegment
+		if err := row.Scan(&msg.TalkerId, &msg.StartTime, &msg.EndTime,
+			&msg.OffSet, &msg.Length, &msg.UsrName, &msg.Status,
+			&msg.Reserved1, &msg.FilePath, &msg.SegmentId, &msg.Reserved2,
+			&msg.Reserved3); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs, nil
 }
 
 func (db *BackupDB) FileSegment(id int) ([]MsgFileSegment, error) {
 	var files []MsgFileSegment
 	rows, err := db.db.Query("SELECT * FROM MsgFileSegment WHERE MapKey = ? ORDER BY InnerOffset", id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var f MsgFileSegment
+		if err = rows.Scan(&f.MapKey, &f.InnerOffSet, &f.Length,
+			&f.TotalLen, &f.OffSet, &f.Reserved1, &f.FileName,
+			&f.Reserved2, &f.Reserved3, &f.Reserved4); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+func (db *BackupDB) FileSegments() ([]MsgFileSegment, error) {
+	var files []MsgFileSegment
+	rows, err := db.db.Query("SELECT * FROM MsgFileSegment ORDER BY MapKey, InnerOffset")
 	if err != nil {
 		return nil, err
 	}

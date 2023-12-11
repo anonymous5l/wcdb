@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/anonymous5l/wcdb/protobuf"
+	"github.com/h2non/filetype"
 	"github.com/urfave/cli/v2"
 	"google.golang.org/protobuf/proto"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var ChatCommand = &cli.Command{
@@ -57,7 +59,15 @@ var ChatCommand = &cli.Command{
 
 var fds sync.Map
 
-func aesDecrypt(pass, data []byte) ([]byte, error) {
+func releaseFds() {
+	fds.Range(func(key, value any) bool {
+		fd := value.(*os.File)
+		fd.Close()
+		return true
+	})
+}
+
+func aesDecrypt(pass, data []byte, usePadding bool) ([]byte, error) {
 	// aes-128-ecb only take front 16
 	cipher, err := aes.NewCipher(pass[:16])
 	if err != nil {
@@ -68,17 +78,19 @@ func aesDecrypt(pass, data []byte) ([]byte, error) {
 		cipher.Decrypt(data[bs:be], data[bs:be])
 	}
 
-	// pkcs7 un pad
-	isPad := true
-	pad := int(data[len(data)-1])
-	for i := 1; i < pad; i++ {
-		if int(data[len(data)-1-i]) != pad {
-			isPad = false
-			break
+	if usePadding {
+		// pkcs7 un pad
+		isPad := true
+		pad := int(data[len(data)-1])
+		for i := 1; i < pad; i++ {
+			if int(data[len(data)-1-i]) != pad {
+				isPad = false
+				break
+			}
 		}
-	}
-	if isPad {
-		data = data[:len(data)-pad]
+		if isPad {
+			data = data[:len(data)-pad]
+		}
 	}
 
 	return data, nil
@@ -97,39 +109,62 @@ func getFd(path string) *os.File {
 	return o
 }
 
+func init() {
+	filetype.AddMatcher(filetype.AddType("aud", ""), func(i []byte) bool {
+		if bytes.Compare(i[:10], []byte{0x02, 0x23, 0x21, 0x53, 0x49, 0x4C, 0x4B, 0x5F, 0x56, 0x33}) == 0 {
+			return true
+		}
+		return false
+	})
+	filetype.AddMatcher(filetype.AddType("doc", ""), func(i []byte) bool {
+		if bytes.Compare(i[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}) == 0 {
+			if len(i) > 512 {
+				if bytes.Compare(i[512:516], []byte{0xec, 0xa5, 0xc1, 0x00}) == 0 {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	filetype.AddMatcher(filetype.AddType("xls", ""), func(i []byte) bool {
+		if bytes.Compare(i[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}) == 0 {
+			if len(i) > 512 {
+				if bytes.Compare(i[512:516], []byte{0xfd, 0xff, 0xff, 0xff}) == 0 && i[516] == 0 {
+					return true
+				} else if bytes.Compare(i[512:516], []byte{0xfd, 0xff, 0xff, 0xff}) == 0 && i[516] == 2 {
+					return true
+				} else if bytes.Compare(i[512:520], []byte{0x09, 0x08, 0x10, 0x00, 0x00, 0x06, 0x05, 0x00}) == 0 {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	filetype.AddMatcher(filetype.AddType("ppt", ""), func(i []byte) bool {
+		if bytes.Compare(i[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}) == 0 {
+			if len(i) > 512 {
+				if bytes.Compare(i[512:516], []byte{0xa0, 0x46, 0x1d, 0xf0}) == 0 {
+					return true
+				} else if bytes.Compare(i[512:516], []byte{0x00, 0x6e, 0x1e, 0xf0}) == 0 {
+					return true
+				} else if bytes.Compare(i[512:516], []byte{0x0F, 0x00, 0xE8, 0x03}) == 0 {
+					return true
+				} else if bytes.Compare(i[512:516], []byte{0xfd, 0xff, 0xff, 0xff}) == 0 && i[517] == 0 && i[518] == 0 {
+					return true
+				}
+			}
+		}
+		return false
+	})
+}
+
 func getExt(data []byte) string {
-	var ext string
-	if bytes.Compare(data[:4], []byte{0xff, 0xd8, 0xff, 0xe0}) == 0 {
-		ext = ".jpg"
+	t, err := filetype.Match(data)
+	if err != nil {
+		return ""
 	}
-	if bytes.Compare(data[:4], []byte{0xff, 0xd8, 0xff, 0xe1}) == 0 {
-		ext = ".jpeg"
-	}
-	if bytes.Compare(data[:4], []byte{0x89, 0x50, 0x4E, 0x47}) == 0 {
-		ext = ".png"
-	}
-	if bytes.Compare(data[:4], []byte{0x00, 0x00, 0x00, 0x14}) == 0 {
-		ext = ".mov"
-	}
-	if bytes.Compare(data[:4], []byte{0x00, 0x00, 0x00, 0x20}) == 0 {
-		ext = ".mp4"
-	}
-	if bytes.Compare(data[:4], []byte{0x00, 0x00, 0x00, 0x1c}) == 0 {
-		ext = ".mp4"
-	}
-	if bytes.Compare(data[:4], []byte{0x52, 0x61, 0x72, 0x21}) == 0 {
-		ext = ".rar"
-	}
-	if bytes.Compare(data[:2], []byte{0x50, 0x4B}) == 0 {
-		ext = ".zip"
-	}
-	if bytes.Compare(data[3:10], []byte{0x53, 0x49, 0x4C, 0x4B, 0x5F, 0x56, 0x33}) == 0 {
-		ext = ".aud"
-	}
-	if bytes.Compare(data[:4], []byte{0x25, 0x50, 0x44, 0x46}) == 0 {
-		ext = ".pdf"
-	}
-	return ext
+
+	return "." + t.Extension
 }
 
 func dumpFile(db *BackupDB, resource, pass, dir, id string) error {
@@ -155,7 +190,7 @@ func dumpFile(db *BackupDB, resource, pass, dir, id string) error {
 		if err != nil {
 			return err
 		}
-		if chunk, err = aesDecrypt([]byte(pass), chunk[:n]); err != nil {
+		if chunk, err = aesDecrypt([]byte(pass), chunk[:n], i == len(file)-1); err != nil {
 			return err
 		}
 		buf.Write(chunk)
@@ -178,6 +213,48 @@ func dumpFile(db *BackupDB, resource, pass, dir, id string) error {
 	return nil
 }
 
+func printGroupMessage(strs *bytes.Buffer, msg XmlMessage) (err error) {
+	if msg.AppMsg.RecordItem == nil {
+		strs.WriteString("[CombineMessage]")
+		return nil
+	}
+
+	var dataList *XmlRecordMessageDataList
+
+	if strings.HasPrefix(msg.AppMsg.RecordItem.Value, "<recorditem>") {
+		var combine XmlMessageRecordItem
+		if err = xml.Unmarshal([]byte(msg.AppMsg.RecordItem.Value), &combine); err != nil {
+			return
+		}
+		dataList = combine.RecordInfo.DataList
+	} else if strings.HasPrefix(msg.AppMsg.RecordItem.Value, "<recordinfo>") {
+		var combine XmlRecordMessage
+		if err = xml.Unmarshal([]byte(msg.AppMsg.RecordItem.Value), &combine); err != nil {
+			return
+		}
+		dataList = combine.DataList
+	} else {
+		fmt.Println(msg.AppMsg.RecordItem.Value)
+	}
+
+	strs.WriteString("[CombineMessage\n")
+	items := dataList.DataItems
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		strs.WriteString(item.SourceName)
+		strs.WriteString(" : ")
+		if item.DataDesc != "" {
+			strs.WriteString(item.DataDesc)
+		} else {
+			strs.WriteString(item.DataTitle)
+		}
+		strs.WriteString("\n")
+	}
+	strs.WriteString("]")
+
+	return nil
+}
+
 func actionChat(ctx *cli.Context) error {
 	dbName := ctx.String("db")
 	resource := ctx.String("resource")
@@ -187,6 +264,8 @@ func actionChat(ctx *cli.Context) error {
 	if !pass.Valid() {
 		return ErrInvalidPassKey
 	}
+
+	defer releaseFds()
 
 	db, err := NewBackupDB(dbName)
 	if err != nil {
@@ -214,233 +293,276 @@ func actionChat(ctx *cli.Context) error {
 		return errors.New("no record")
 	}
 
-	msg, err := db.MsgSegment(talkerId)
-	if err != nil {
-		return err
-	}
-
-	bakFilename := filepath.Join(resource, msg.FilePath)
-	bakFile, err := os.Open(bakFilename)
-	if err != nil {
-		return err
-	}
-	if _, err = bakFile.Seek(msg.OffSet, io.SeekStart); err != nil {
-		return err
-	}
-	data := make([]byte, msg.Length, msg.Length)
-	dataSize, err := bakFile.Read(data)
-	if err != nil {
-		return err
-	}
-	if dataSize != len(data) {
-		return errors.New("invalid BAK file")
-	}
-
-	if data, err = aesDecrypt([]byte(pass), data); err != nil {
-		return err
-	}
-
-	resourcePath := filepath.Join("res", talker)
-	if media {
-		if _, err = os.Stat(resourcePath); err != nil {
-			if os.IsNotExist(err) {
-				if err = os.MkdirAll(resourcePath, 0755); err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	var pMessages protobuf.BakChatMsgList
-	if err = proto.Unmarshal(data, &pMessages); err != nil {
-		return err
-	}
-
 	strs := bytes.NewBufferString("")
-	for i := 0; i < int(pMessages.GetCount()); i++ {
-		message := pMessages.GetList()[i]
 
-		if strs.Len() > 0 {
-			strs.WriteString("\n")
+	msgs, err := db.MsgSegment(talkerId)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < len(msgs); i++ {
+		msg := msgs[i]
+
+		bakFilename := filepath.Join(resource, msg.FilePath)
+
+		bakFile := getFd(bakFilename)
+
+		if _, err = bakFile.Seek(msg.OffSet, io.SeekStart); err != nil {
+			return err
 		}
 
+		var dataSize int
+
+		data := make([]byte, msg.Length, msg.Length)
+
+		if dataSize, err = bakFile.Read(data); err != nil {
+			return err
+		}
+		if dataSize != len(data) {
+			return errors.New("invalid BAK file")
+		}
+
+		if data, err = aesDecrypt([]byte(pass), data, true); err != nil {
+			return err
+		}
+
+		resourcePath := filepath.Join("res", talker)
 		if media {
-			medias := message.GetMediaId()
-			for j := 0; j < len(medias); j++ {
-				id := medias[j]
-				if err = dumpFile(db, resource, string(pass), resourcePath, id.GetStr()); err != nil {
-					return err
+			if _, err = os.Stat(resourcePath); err != nil {
+				if os.IsNotExist(err) {
+					if err = os.MkdirAll(resourcePath, 0755); err != nil {
+						return err
+					}
 				}
 			}
 		}
 
-		if message.FromUserName.GetStr() == talker {
-			strs.WriteString("->:")
-		} else {
-			strs.WriteString("  <-:")
+		var pMessages protobuf.BakChatMsgList
+		if err = proto.Unmarshal(data, &pMessages); err != nil {
+			return err
 		}
-		// 10000 be contacts notify message
-		// 1 text message
-		// 3 image
-		// 34 voice message
-		// 47 emoji
-		// 62 short video
-		// 50 voip message
-		// 48 location
-		// 76 qq music
-		// 3 netease music
-		// 42 name card
-		// 49 composite message
-		//   type - 6 - file
-		//   type - 33 - applet
-		//   type - 36 - app share
-		//   type - 17 - realtime location share
-		//   type - 2000 - money transfer
-		//   type - 2001 - lucky money
-		msgType := message.GetType()
 
-		content := message.GetContent().GetStr()
+		strs.Reset()
+		for i := 0; i < int(pMessages.GetCount()); i++ {
+			message := pMessages.GetList()[i]
 
-		switch msgType {
-		case 42:
-			var xmlMessage XmlNameCard
-			if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
-				return err
+			if strs.Len() > 0 {
+				strs.WriteString("\n")
 			}
-			strs.WriteString("[NameCard: ")
-			strs.WriteString(xmlMessage.NickName)
-			strs.WriteString("]")
-		case 49:
-			var xmlMessage XmlMessage
-			if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
-				return err
+
+			if media {
+				medias := message.GetMediaId()
+				for j := 0; j < len(medias); j++ {
+					id := medias[j]
+					if err = dumpFile(db, resource, string(pass), resourcePath, id.GetStr()); err != nil {
+						return err
+					}
+				}
 			}
-			if xmlMessage.AppMsg == nil {
-				break
+
+			msgId := message.GetNewMsgId()
+
+			strs.WriteString(fmt.Sprintf("%20d", msgId))
+			strs.WriteString(" | ")
+
+			millTime := time.UnixMilli(message.GetClientMsgMillTime())
+
+			if message.FromUserName.GetStr() == talker {
+				strs.WriteString("\x1B[1;37m(")
+				strs.WriteString(millTime.Format("2006-01-02 15:04:05"))
+				strs.WriteString(") -> : ")
+			} else {
+				strs.WriteString("\x1B[1;32m(")
+				strs.WriteString(millTime.Format("2006-01-02 15:04:05"))
+				strs.WriteString(") <- : ")
 			}
-			switch xmlMessage.AppMsg.Type {
-			case 33:
-				strs.WriteString("[Applet: ")
-				strs.WriteString(xmlMessage.AppMsg.Title)
+
+			// 10000 be contacts notify message
+			// 1 text message
+			// 3 image
+			// 34 voice message
+			// 47 emoji
+			// 62 short video
+			// 50 voip message
+			// 48 location
+			// 76 qq music
+			// 3 netease music
+			// 4 red book
+			// 42 name card
+			// 19 group join refer message
+			// 49 composite message
+			//   type - 6 - file
+			//   type - 57 - refer message
+			//   type - 33 - applet
+			//   type - 36 - app share
+			//   type - 17 - realtime location share
+			//   type - 2000 - money transfer
+			//   type - 2001 - lucky money
+			// 62 tickle
+			msgType := message.GetType()
+
+			content := message.GetContent().GetStr()
+
+			switch msgType {
+			case 42:
+				var xmlMessage XmlNameCard
+				if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
+					return err
+				}
+				strs.WriteString("[NameCard: ")
+				strs.WriteString(xmlMessage.NickName)
 				strs.WriteString("]")
-			case 36:
-				strs.WriteString("[App: ")
-				strs.WriteString(xmlMessage.AppMsg.Title)
+			case 49:
+				var xmlMessage XmlMessage
+				if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
+					return err
+				}
+				if xmlMessage.AppMsg == nil {
+					break
+				}
+				switch xmlMessage.AppMsg.Type {
+				case 19:
+					if err = printGroupMessage(strs, xmlMessage); err != nil {
+						return err
+					}
+				case 62:
+					strs.WriteString("[Tickle]")
+				case 57:
+					strs.WriteString(xmlMessage.AppMsg.Title)
+					strs.WriteString(" [Refer: ")
+					strs.WriteString(xmlMessage.AppMsg.ReferMsg.DisplayName)
+					strs.WriteString(":")
+					strs.WriteString(xmlMessage.AppMsg.ReferMsg.Content)
+					strs.WriteString("]")
+				case 33:
+					strs.WriteString("[Applet: ")
+					strs.WriteString(xmlMessage.AppMsg.Title)
+					strs.WriteString("]")
+				case 36:
+					strs.WriteString("[App: ")
+					strs.WriteString(xmlMessage.AppMsg.Title)
+					strs.WriteString("]")
+				case 4, 5:
+					strs.WriteString("[Link: ")
+					strs.WriteString(xmlMessage.AppMsg.Title)
+					strs.WriteString("]")
+				case 76, 3:
+					strs.WriteString("[Music: ")
+					strs.WriteString(xmlMessage.AppMsg.Title)
+					strs.WriteString("]")
+				case 6:
+					strs.WriteString("[File: ")
+					strs.WriteString(xmlMessage.AppMsg.Title)
+					strs.WriteString("]")
+				case 2001, 2000:
+					strs.WriteString("[" + xmlMessage.AppMsg.Title + "]")
+				default:
+					strs.WriteString(content)
+				}
+			case 48:
+				var xmlMessage XmlMessage
+				if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
+					return err
+				}
+				strs.WriteString("[Location: ")
+				strs.WriteString(xmlMessage.Location.Label)
 				strs.WriteString("]")
-			case 5:
-				strs.WriteString("[Link: ")
-				strs.WriteString(xmlMessage.AppMsg.Title)
+			case 47:
+				var xmlMessage XmlMessage
+				if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
+					return err
+				}
+				strs.WriteString("[Emoji: ")
+				strs.WriteString(xmlMessage.Emoji.MD5)
 				strs.WriteString("]")
-			case 76, 3:
-				strs.WriteString("[Music: ")
-				strs.WriteString(xmlMessage.AppMsg.Title)
+			case 34:
+				if strings.HasPrefix(content, "<msg>") {
+					var xmlMessage XmlMessage
+					if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
+						return err
+					}
+
+					strs.WriteString("[Voice: ")
+					strs.WriteString(strconv.FormatFloat(float64(xmlMessage.Voice.VoiceLength)/1000, 'f', 1, 64))
+					strs.WriteByte('s')
+					strs.WriteString("]")
+				} else {
+					strs.WriteString("[Voice]")
+				}
+			case 43:
+				var xmlMessage XmlMessage
+				if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
+					return err
+				}
+
+				strs.WriteString("[Video: ")
+				strs.WriteString(strconv.FormatInt(int64(xmlMessage.Video.PlayLength), 10))
+				strs.WriteByte('s')
 				strs.WriteString("]")
-			case 6:
-				strs.WriteString("[File: ")
-				strs.WriteString(xmlMessage.AppMsg.Title)
+			case 50:
+				if strings.HasPrefix(content, "<voipinvitemsg>") {
+					var voip XmlOldVoIP
+					if err = xml.Unmarshal([]byte("<xml>"+content+"</xml>"), &voip); err != nil {
+						return err
+					}
+
+					if voip.VoIPInviteMsg.InviteType == 0 {
+						strs.WriteString("[VideoCall: ")
+					} else if voip.VoIPInviteMsg.InviteType == 1 {
+						strs.WriteString("[VoiceCall: ")
+					}
+
+					switch voip.VoIPLocalInfo.WordingType {
+					case 4:
+						strs.WriteString(strconv.FormatInt(int64(voip.VoIPLocalInfo.Duration), 10))
+						strs.WriteString("s")
+					case 2:
+						strs.WriteString("Canceled")
+					case 3:
+						strs.WriteString("Aborted")
+					case 1: // FIXME maybe don't known
+						strs.WriteString("Timeout")
+					}
+
+					strs.WriteString("]")
+				} else {
+
+					var voip XmlVoIP
+					if err = xml.Unmarshal([]byte(content), &voip); err != nil {
+						return err
+					}
+
+					if voip.VoIPBubbleMsg.RoomType == 0 {
+						strs.WriteString("[VideoCall: ")
+					} else if voip.VoIPBubbleMsg.RoomType == 1 {
+						strs.WriteString("[VoiceCall: ")
+					}
+
+					strs.WriteString(voip.VoIPBubbleMsg.Msg)
+					strs.WriteString("]")
+				}
+			case 3:
+				var xmlMessage XmlMessage
+				if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
+					return err
+				}
+
+				strs.WriteString("[Image: ")
+				strs.WriteString(xmlMessage.Image.MD5)
 				strs.WriteString("]")
-			case 2001, 2000:
-				strs.WriteString("[" + xmlMessage.AppMsg.Title + "]")
+			case 1, 10000:
+				strs.WriteString(content)
 			default:
+				strs.WriteString(strconv.FormatUint(uint64(msgType), 10))
+				strs.WriteString(":")
 				strs.WriteString(content)
 			}
-		case 48:
-			var xmlMessage XmlMessage
-			if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
-				return err
-			}
-			strs.WriteString("[Location: ")
-			strs.WriteString(xmlMessage.Location.Label)
-			strs.WriteString("]")
-		case 47:
-			var xmlMessage XmlMessage
-			if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
-				return err
-			}
-			strs.WriteString("[Emoji: ")
-			strs.WriteString(xmlMessage.Emoji.MD5)
-			strs.WriteString("]")
-		case 34:
-			var xmlMessage XmlMessage
-			if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
-				return err
-			}
 
-			strs.WriteString("[Voice: ")
-			strs.WriteString(strconv.FormatFloat(float64(xmlMessage.Voice.VoiceLength)/1000, 'f', 1, 64))
-			strs.WriteByte('s')
-			strs.WriteString("]")
-		case 43:
-			var xmlMessage XmlMessage
-			if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
-				return err
-			}
-
-			strs.WriteString("[Video: ")
-			strs.WriteString(strconv.FormatInt(int64(xmlMessage.Video.PlayLength), 10))
-			strs.WriteByte('s')
-			strs.WriteString("]")
-		case 50:
-			if strings.HasPrefix(content, "<voipinvitemsg>") {
-				var voip XmlOldVoIP
-				if err = xml.Unmarshal([]byte("<xml>"+content+"</xml>"), &voip); err != nil {
-					return err
-				}
-
-				if voip.VoIPInviteMsg.InviteType == 0 {
-					strs.WriteString("[VideoCall: ")
-				} else if voip.VoIPInviteMsg.InviteType == 1 {
-					strs.WriteString("[VoiceCall: ")
-				}
-
-				switch voip.VoIPLocalInfo.WordingType {
-				case 4:
-					strs.WriteString(strconv.FormatInt(int64(voip.VoIPLocalInfo.Duration), 10))
-					strs.WriteString("s")
-				case 2:
-					strs.WriteString("Canceled")
-				case 3:
-					strs.WriteString("Aborted")
-				case 1: // FIXME maybe don't known
-					strs.WriteString("Timeout")
-				}
-
-				strs.WriteString("]")
-			} else {
-
-				var voip XmlVoIP
-				if err = xml.Unmarshal([]byte(content), &voip); err != nil {
-					return err
-				}
-
-				if voip.VoIPBubbleMsg.RoomType == 0 {
-					strs.WriteString("[VideoCall: ")
-				} else if voip.VoIPBubbleMsg.RoomType == 1 {
-					strs.WriteString("[VoiceCall: ")
-				}
-
-				strs.WriteString(voip.VoIPBubbleMsg.Msg)
-				strs.WriteString("]")
-			}
-		case 3:
-			var xmlMessage XmlMessage
-			if err = xml.Unmarshal([]byte(content), &xmlMessage); err != nil {
-				return err
-			}
-
-			strs.WriteString("[Image: ")
-			strs.WriteString(xmlMessage.Image.MD5)
-			strs.WriteString("]")
-		case 1, 10000:
-			strs.WriteString(content)
-		default:
-			strs.WriteString(strconv.FormatUint(uint64(msgType), 10))
-			strs.WriteString(":")
-			strs.WriteString(content)
+			strs.WriteString("\u001B[0m")
 		}
-	}
 
-	fmt.Println(strs.String())
+		fmt.Println(strs.String())
+	}
 
 	return nil
 }

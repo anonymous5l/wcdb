@@ -7,9 +7,9 @@ import (
 
 type Config struct {
 	Key       string
-	Reserved0 int
+	Reserved0 sql.NullInt64
 	Buf       []byte
-	Reserved1 int
+	Reserved1 sql.NullInt64
 	Reserved2 string
 }
 
@@ -19,11 +19,11 @@ type MsgFileSegment struct {
 	Length      int
 	TotalLen    int
 	OffSet      int64
-	Reserved1   int
+	Reserved1   sql.NullInt64
 	FileName    string
 	Reserved2   sql.NullString
 	Reserved3   sql.NullString
-	Reserved4   int
+	Reserved4   sql.NullInt64
 }
 
 type Session struct {
@@ -31,8 +31,8 @@ type Session struct {
 	EndTime   int64
 	TotalSize int64
 	NickName  string
-	Reserved0 int
-	Reserved1 int
+	Reserved0 sql.NullInt64
+	Reserved1 sql.NullInt64
 	Reserved2 sql.NullString
 	Reserved3 sql.NullString
 	StartTime int64
@@ -51,7 +51,7 @@ type MsgSegment struct {
 	Length    int
 	UsrName   string
 	Status    int
-	Reserved1 int
+	Reserved1 sql.NullInt64
 	FilePath  string
 	SegmentId string
 	Reserved2 sql.NullString
@@ -66,8 +66,8 @@ type MsgMedia struct {
 	MD5          sql.NullString
 	Talker       string
 	MediaIdStr   string
-	Reserved0    int
-	Reserved1    int
+	Reserved0    sql.NullInt64
+	Reserved1    sql.NullInt64
 	Reserved2    sql.NullString
 }
 
@@ -84,7 +84,7 @@ type XmlAppAttach struct {
 	CDNAttachURL   string   `xml:"cdnattachurl,omitempty"`
 	CDNThumbURL    string   `xml:"cdnthumburl,omitempty"`
 	CDNThumbMD5    string   `xml:"cdnthumbmd5,omitempty"`
-	CDNThumbLength int      `xml:"cdnthumblength,omitempty"`
+	CDNThumbLength string   `xml:"cdnthumblength,omitempty"`
 	CDNThumbWidth  int      `xml:"cdnthumbwidth,omitempty"`
 	CDNThumbHeight int      `xml:"cdnthumbheight,omitempty"`
 	CDNThumbAESKey string   `xml:"cdnthumbaeskey"`
@@ -94,37 +94,49 @@ type XmlAppAttach struct {
 	CDNThumbCRC    uint32   `xml:"-"`
 }
 
+type XmlAppMessageRefer struct {
+	XMLName     xml.Name `xml:"refermsg"`
+	Type        int      `xml:"type"`
+	SvrId       uint64   `xml:"svrid"`
+	FromUsr     string   `xml:"fromusr"`
+	ChatUsr     string   `xml:"chatusr"`
+	DisplayName string   `xml:"displayname"`
+	Content     string   `xml:"content"`
+	CreateTime  int64    `xml:"createtime"`
+}
+
 type XmlAppMessage struct {
-	XMLName           xml.Name      `xml:"appmsg"`
-	AppId             string        `xml:"appid,attr"`
-	SdkVer            int           `xml:"sdkver,attr"`
-	Title             string        `xml:"title"`
-	Desc              string        `xml:"des"`
-	Action            string        `xml:"action"`
-	Type              int           `xml:"type"`
-	ShowType          int           `xml:"showtype"`
-	SoundType         int           `xml:"soundtype"`
-	MediaTagName      string        `xml:"mediatagname"`
-	MessageExt        string        `xml:"messageext"`
-	MessageAction     string        `xml:"messageaction"`
-	Content           string        `xml:"content"`
-	ContentAttr       int           `xml:"contentattr"`
-	URL               string        `xml:"url"`
-	LowURL            string        `xml:"lowurl"`
-	DataURL           string        `xml:"dataurl"`
-	LowDataURL        string        `xml:"lowdataurl"`
-	SongAlbumURL      string        `xml:"songalbumurl,omitempty"`
-	SongLyric         string        `xml:"soinglyric,omitempty"`
-	AppAttach         *XmlAppAttach `xml:"appattach,omitempty"`
-	ExtInfo           string        `xml:"extinfo"`
-	SourceUserName    string        `xml:"sourceusername"`
-	SourceDisplayName string        `xml:"sourcedisplayname"`
-	ThumbURL          string        `xml:"thumburl"`
-	MD5               string        `xml:"md5"`
-	StatExtStr        string        `xml:"Statextstr"`
-	XMLFullLen        uint32        `xml:"xmlfulllen,omitempty"`
-	DirectShare       int           `xml:"directshare,omitempty"`
-	RecordItem        *cdata        `xml:"recorditem,omitempty"`
+	XMLName           xml.Name            `xml:"appmsg"`
+	AppId             string              `xml:"appid,attr"`
+	SdkVer            int                 `xml:"sdkver,attr"`
+	Title             string              `xml:"title"`
+	Desc              string              `xml:"des"`
+	Action            string              `xml:"action"`
+	Type              int                 `xml:"type"`
+	ShowType          int                 `xml:"showtype"`
+	SoundType         int                 `xml:"soundtype"`
+	MediaTagName      string              `xml:"mediatagname"`
+	MessageExt        string              `xml:"messageext"`
+	MessageAction     string              `xml:"messageaction"`
+	Content           string              `xml:"content"`
+	ContentAttr       int                 `xml:"contentattr"`
+	URL               string              `xml:"url"`
+	LowURL            string              `xml:"lowurl"`
+	DataURL           string              `xml:"dataurl"`
+	LowDataURL        string              `xml:"lowdataurl"`
+	SongAlbumURL      string              `xml:"songalbumurl,omitempty"`
+	SongLyric         string              `xml:"soinglyric,omitempty"`
+	AppAttach         *XmlAppAttach       `xml:"appattach,omitempty"`
+	ExtInfo           string              `xml:"extinfo"`
+	SourceUserName    string              `xml:"sourceusername"`
+	SourceDisplayName string              `xml:"sourcedisplayname"`
+	ThumbURL          string              `xml:"thumburl"`
+	MD5               string              `xml:"md5"`
+	StatExtStr        string              `xml:"Statextstr"`
+	XMLFullLen        uint32              `xml:"xmlfulllen,omitempty"`
+	DirectShare       int                 `xml:"directshare,omitempty"`
+	RecordItem        *cdata              `xml:"recorditem,omitempty"`
+	ReferMsg          *XmlAppMessageRefer `xml:"refermsg,omitempty"`
 }
 
 type XmlAppInfo struct {
@@ -185,19 +197,19 @@ type XmlEmoji struct {
 type XmlImage struct {
 	XMLName        xml.Name `xml:"img"`
 	CDNBigImgURL   string   `xml:"cdnbigimgurl,attr"`
-	HDLength       int      `xml:"hdlength,attr"`
-	CDNHDHeight    int      `xml:"cdnhdheight,attr"`
-	Length         int      `xml:"length,attr"`
+	HDLength       string   `xml:"hdlength,attr"`
+	CDNHDHeight    string   `xml:"cdnhdheight,attr"`
+	Length         string   `xml:"length,attr"`
 	CDNThumbAESKey string   `xml:"cdnthumbaeskey,attr"`
 	MD5            string   `xml:"md5,attr"`
-	CDNHDWidth     int      `xml:"cdnhdwidth,attr"`
-	CDNThumbWidth  int      `xml:"cdnthumbwidth,attr"`
-	CDNThumbHeight int      `xml:"cdnthumbheight,attr"`
+	CDNHDWidth     string   `xml:"cdnhdwidth,attr"`
+	CDNThumbWidth  string   `xml:"cdnthumbwidth,attr"`
+	CDNThumbHeight string   `xml:"cdnthumbheight,attr"`
 	AESKey         string   `xml:"aeskey,attr"`
-	CDNMidWidth    int      `xml:"cdnmidwidth,attr"`
-	CDNMidHeight   int      `xml:"cdnmidheight,attr"`
-	CDNThumbLength int      `xml:"cdnthumblength,attr"`
-	EncryptVer     int      `xml:"encryver,attr"`
+	CDNMidWidth    string   `xml:"cdnmidwidth,attr"`
+	CDNMidHeight   string   `xml:"cdnmidheight,attr"`
+	CDNThumbLength string   `xml:"cdnthumblength,attr"`
+	EncryptVer     string   `xml:"encryver,attr"`
 	CDNMidImgURL   string   `xml:"cdnmidimgurl,attr"`
 	CDNThumbURL    string   `xml:"cdnthumburl,attr"`
 	FileKey        string   `xml:"filekey,attr"`
@@ -213,7 +225,7 @@ type XmlVideo struct {
 	AESKey            string   `xml:"aeskey,attr"`
 	CDNVideoURL       string   `xml:"cdnvideourl,attr"`
 	CDNThumbURL       string   `xml:"cdnthumburl,attr"`
-	CDNThumbLength    int      `xml:"cdnthumblength,attr"`
+	CDNThumbLength    string   `xml:"cdnthumblength,attr"`
 	CDNThumbWidth     int      `xml:"cdnthumbwidth,attr"`
 	CDNThumbHeight    int      `xml:"cdnthumbheight,attr"`
 	CDNThumbAESKey    string   `xml:"cdnthumbaeskey,attr"`
@@ -222,7 +234,7 @@ type XmlVideo struct {
 	MD5               string   `xml:"md5,attr"`
 	NewMD5            string   `xml:"newmd5,attr"`
 	IsPlaceHolder     int      `xml:"isplaceholder,attr"`
-	RawLength         int      `xml:"rawlength,attr"`
+	RawLength         string   `xml:"rawlength,attr"`
 	CDNRawVideoURL    string   `xml:"cdnrawvideourl,attr"`
 	CDNRawVideoAESKey string   `xml:"cdnrawvideoaeskey,attr"`
 }
@@ -231,7 +243,7 @@ type XmlLocation struct {
 	XMLName xml.Name `xml:"location"`
 	X       float64  `xml:"x,attr"`
 	Y       float64  `xml:"y,attr"`
-	Scale   int      `xml:"scale,attr"`
+	Scale   float64  `xml:"scale,attr"`
 	Label   string   `xml:"label,attr"`
 	POIName string   `xml:"poiname,attr"`
 	InfoURL string   `xml:"infourl,attr"`
@@ -264,6 +276,50 @@ type XmlNameCard struct {
 	AntiSpamTicket          string   `xml:"antispamticket,attr"`
 }
 
+type XmlRecordMessageDataItemSource struct {
+	XMLName      xml.Name `xml:"dataitemsource"`
+	HashUsername string   `xml:"hashusername"`
+}
+
+type XmlRecordMessageDataItem struct {
+	XMLName          xml.Name                        `xml:"dataitem"`
+	DataDesc         string                          `xml:"datadesc"`
+	DataType         int                             `xml:"datatype,attr"`
+	DataId           string                          `xml:"dataid,attr"`
+	DataTitle        string                          `xml:"datatitle"`
+	CDNDataURL       string                          `xml:"cdndataurl"`
+	CDNDataKey       string                          `xml:"cdndatakey"`
+	FullMD5          string                          `xml:"fullmd5"`
+	DataSize         int                             `xml:"datasize"`
+	DataFmt          string                          `xml:"datafmt"`
+	SourceName       string                          `xml:"sourcename"`
+	SourceHeadURL    string                          `xml:"sourceheadurl"`
+	SourceTime       string                          `xml:"sourcetime"`
+	SrcMsgCreateTime int64                           `xml:"srcMsgCreateTime"`
+	FromNewMsgId     int64                           `xml:"fromnewmsgid"`
+	AppId            string                          `xml:"appid"`
+	DataItemSource   *XmlRecordMessageDataItemSource `xml:"dataitemsource,omitempty"`
+	FileType         int                             `xml:"filetype"`
+}
+
+type XmlRecordMessageDataList struct {
+	XMLName   xml.Name                   `xml:"datalist"`
+	Count     int                        `xml:"count,attr"`
+	DataItems []XmlRecordMessageDataItem `xml:"dataitem"`
+}
+
+type XmlRecordMessage struct {
+	XMLName  xml.Name                  `xml:"recordinfo"`
+	Info     string                    `xml:"info"`
+	Desc     string                    `xml:"desc"`
+	DataList *XmlRecordMessageDataList `xml:"datalist"`
+}
+
+type XmlMessageRecordItem struct {
+	XMLName    xml.Name          `xml:"recorditem"`
+	RecordInfo *XmlRecordMessage `xml:"recordinfo"`
+}
+
 type XmlMessage struct {
 	XMLName      xml.Name       `xml:"msg"`
 	AppMsg       *XmlAppMessage `xml:"appmsg,omitempty"`
@@ -276,6 +332,7 @@ type XmlMessage struct {
 	Image        *XmlImage      `xml:"img,omitempty"`
 	Video        *XmlVideo      `xml:"videomsg,omitempty"`
 	Location     *XmlLocation   `xml:"location,omitempty"`
+	RecordItem   *cdata         `xml:"recorditem,omitempty"`
 }
 
 type XmlVoIPBubble struct {

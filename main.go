@@ -20,6 +20,8 @@ func main() {
 			DumpCommand,
 			SessionCommand,
 			ChatCommand,
+			DecryptCommand,
+			ResourcesCommand,
 		},
 	}
 
